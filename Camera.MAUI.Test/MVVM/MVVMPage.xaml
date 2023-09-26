@@ -12,11 +12,12 @@
     <ScrollView>
         <Grid>
             <VerticalStackLayout HorizontalOptions="Center" VerticalOptions="Center">
-                <cv:CameraView x:Name="cameraView" WidthRequest="300" HeightRequest="200" BarCodeOptions="{Binding BarCodeOptions}" BarCodeResults="{Binding BarCodeResults, Mode=OneWayToSource}"
+                <cv:CameraView x:Name="cameraView" HeightRequest="300" BarCodeOptions="{Binding BarCodeOptions}" BarCodeResults="{Binding BarCodeResults, Mode=OneWayToSource}"
                                Cameras="{Binding Cameras, Mode=OneWayToSource}" Camera="{Binding Camera}" AutoStartPreview="{Binding AutoStartPreview}" NumCamerasDetected="{Binding NumCameras, Mode=OneWayToSource}"
                                AutoSnapShotAsImageSource="True" AutoSnapShotFormat="PNG" TakeAutoSnapShot="{Binding TakeSnapshot}" AutoSnapShotSeconds="{Binding SnapshotSeconds}"
                                Microphones="{Binding Microphones, Mode=OneWayToSource}" Microphone="{Binding Microphone}" NumMicrophonesDetected="{Binding NumMicrophones, Mode=OneWayToSource}" 
-                               AutoRecordingFile="{Binding RecordingFile}" AutoStartRecording="{Binding AutoStartRecording}"/>
+                               AutoRecordingFile="{Binding RecordingFile}" AutoStartRecording="{Binding AutoStartRecording}" FrameReceived="cameraView_FrameReceived"/>
+                <Image x:Name="frameImage" HeightRequest="300" Margin="5"></Image>
                 <HorizontalStackLayout HorizontalOptions="Center" Margin="5">
                     <Label Text="Select a camera:" VerticalOptions="Center" BackgroundColor="White" TextColor="Black"/>
                     <Picker VerticalOptions="Center" TextColor="Black" ItemsSource="{Binding Cameras}" SelectedItem="{Binding Camera,Mode=TwoWay}"/>
@@ -56,7 +57,7 @@
                 </HorizontalStackLayout>
                 <Label Text="{Binding BarcodeText}" TextColor="Black" FontAttributes="Bold" HorizontalOptions="Center" />
                 <Image BindingContext="{x:Reference cameraView}" Source="{Binding SnapShot}" Aspect="AspectFit" WidthRequest="250" HeightRequest="100" HorizontalOptions="Center" />
-                <toolkit:MediaElement Source="{Binding VideoSource}" ShouldAutoPlay="False" ShouldShowPlaybackControls="True" HeightRequest="300" WidthRequest="200" />
+                <!--<toolkit:MediaElement Source="{Binding VideoSource}" ShouldAutoPlay="False" ShouldShowPlaybackControls="True" HeightRequest="300" WidthRequest="200" />-->
             </VerticalStackLayout>
         </Grid>
     </ScrollView>

@@ -2,6 +2,7 @@
 using Microsoft.Maui.Controls;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Security.Cryptography;
 using ZXing;
 using static Microsoft.Maui.ApplicationModel.Permissions;
 #if IOS || MACCATALYST
@@ -22,21 +23,21 @@ public class CameraView : View, ICameraView
     public static readonly BindableProperty TorchEnabledProperty = BindableProperty.Create(nameof(TorchEnabled), typeof(bool), typeof(CameraView), false);
     public static readonly BindableProperty CamerasProperty = BindableProperty.Create(nameof(Cameras), typeof(ObservableCollection<CameraInfo>), typeof(CameraView), new ObservableCollection<CameraInfo>());
     public static readonly BindableProperty NumCamerasDetectedProperty = BindableProperty.Create(nameof(NumCamerasDetected), typeof(int), typeof(CameraView), 0);
-    public static readonly BindableProperty CameraProperty = BindableProperty.Create(nameof(Camera), typeof(CameraInfo), typeof(CameraView), null, propertyChanged:CameraChanged);
+    public static readonly BindableProperty CameraProperty = BindableProperty.Create(nameof(Camera), typeof(CameraInfo), typeof(CameraView), null, propertyChanged: CameraChanged);
     public static readonly BindableProperty MicrophonesProperty = BindableProperty.Create(nameof(Microphones), typeof(ObservableCollection<MicrophoneInfo>), typeof(CameraView), new ObservableCollection<MicrophoneInfo>());
     public static readonly BindableProperty NumMicrophonesDetectedProperty = BindableProperty.Create(nameof(NumMicrophonesDetected), typeof(int), typeof(CameraView), 0);
     public static readonly BindableProperty MicrophoneProperty = BindableProperty.Create(nameof(Microphone), typeof(MicrophoneInfo), typeof(CameraView), null);
     public static readonly BindableProperty MirroredImageProperty = BindableProperty.Create(nameof(MirroredImage), typeof(bool), typeof(CameraView), false);
     public static readonly BindableProperty BarCodeDetectionEnabledProperty = BindableProperty.Create(nameof(BarCodeDetectionEnabled), typeof(bool), typeof(CameraView), false);
     public static readonly BindableProperty BarCodeDetectionFrameRateProperty = BindableProperty.Create(nameof(BarCodeDetectionFrameRate), typeof(int), typeof(CameraView), 10);
-    public static readonly BindableProperty BarCodeOptionsProperty = BindableProperty.Create(nameof(BarCodeOptions), typeof(BarcodeDecodeOptions), typeof(CameraView), new BarcodeDecodeOptions(), propertyChanged:BarCodeOptionsChanged);
+    public static readonly BindableProperty BarCodeOptionsProperty = BindableProperty.Create(nameof(BarCodeOptions), typeof(BarcodeDecodeOptions), typeof(CameraView), new BarcodeDecodeOptions(), propertyChanged: BarCodeOptionsChanged);
     public static readonly BindableProperty BarCodeResultsProperty = BindableProperty.Create(nameof(BarCodeResults), typeof(Result[]), typeof(CameraView), null, BindingMode.OneWayToSource);
     public static readonly BindableProperty ZoomFactorProperty = BindableProperty.Create(nameof(ZoomFactor), typeof(float), typeof(CameraView), 1f);
     public static readonly BindableProperty AutoSnapShotSecondsProperty = BindableProperty.Create(nameof(AutoSnapShotSeconds), typeof(float), typeof(CameraView), 0f);
     public static readonly BindableProperty AutoSnapShotFormatProperty = BindableProperty.Create(nameof(AutoSnapShotFormat), typeof(ImageFormat), typeof(CameraView), ImageFormat.PNG);
     public static readonly BindableProperty SnapShotProperty = BindableProperty.Create(nameof(SnapShot), typeof(ImageSource), typeof(CameraView), null, BindingMode.OneWayToSource);
     public static readonly BindableProperty SnapShotStreamProperty = BindableProperty.Create(nameof(SnapShotStream), typeof(Stream), typeof(CameraView), null, BindingMode.OneWayToSource);
-    public static readonly BindableProperty TakeAutoSnapShotProperty = BindableProperty.Create(nameof(TakeAutoSnapShot), typeof(bool), typeof(CameraView), false, propertyChanged:TakeAutoSnapShotChanged);
+    public static readonly BindableProperty TakeAutoSnapShotProperty = BindableProperty.Create(nameof(TakeAutoSnapShot), typeof(bool), typeof(CameraView), false, propertyChanged: TakeAutoSnapShotChanged);
     public static readonly BindableProperty AutoSnapShotAsImageSourceProperty = BindableProperty.Create(nameof(AutoSnapShotAsImageSource), typeof(bool), typeof(CameraView), false);
     public static readonly BindableProperty AutoStartPreviewProperty = BindableProperty.Create(nameof(AutoStartPreview), typeof(bool), typeof(CameraView), false, propertyChanged: AutoStartPreviewChanged);
     public static readonly BindableProperty AutoRecordingFileProperty = BindableProperty.Create(nameof(AutoRecordingFile), typeof(string), typeof(CameraView), string.Empty);
@@ -278,6 +279,13 @@ public class CameraView : View, ICameraView
     /// </summary>
     public static CameraView Current { get; set; }
 
+    public event EventHandler<FrameEventArgs> FrameReceived;
+
+    public void OnFrameReceived(byte[] rgb)
+    {
+        FrameReceived?.Invoke(this, new FrameEventArgs { Bytes = rgb });
+    }
+
     private readonly BarcodeReaderGeneric BarcodeReader;
     internal DateTime lastSnapshot = DateTime.Now;
 
@@ -348,7 +356,7 @@ public class CameraView : View, ICameraView
                 }
             }
         }
-        catch {}
+        catch { }
     }
     private static void CameraChanged(BindableObject bindable, object oldValue, object newValue)
     {
@@ -377,7 +385,7 @@ public class CameraView : View, ICameraView
                     await control.StopCameraAsync();
             }
             catch { }
-                    
+
         }
     }
     private static async void AutoStartRecordingChanged(BindableObject bindable, object oldValue, object newValue)
@@ -534,8 +542,9 @@ public class CameraView : View, ICameraView
     }
     internal void RefreshDevices()
     {
-        Task.Run(() => { 
-            OnPropertyChanged(nameof(Cameras)); 
+        Task.Run(() =>
+        {
+            OnPropertyChanged(nameof(Cameras));
             NumCamerasDetected = Cameras.Count;
             OnPropertyChanged(nameof(Microphones));
             NumMicrophonesDetected = Microphones.Count;
@@ -569,4 +578,10 @@ public class CameraView : View, ICameraView
         }
         return true;
     }
+
+    public record FrameEventArgs
+    {
+        public byte[] Bytes { get; init; }
+    }
+
 }

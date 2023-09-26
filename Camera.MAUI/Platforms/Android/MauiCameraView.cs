@@ -12,10 +12,11 @@ using Size = Android.Util.Size;
 using Class = Java.Lang.Class;
 using Rect = Android.Graphics.Rect;
 using Android.Runtime;
+using Android.Renderscripts;
 
 namespace Camera.MAUI.Platforms.Android;
 
-internal class MauiCameraView: GridLayout
+internal class MauiCameraView : GridLayout
 {
     private readonly CameraView cameraView;
     private IExecutorService executorService;
@@ -40,13 +41,13 @@ internal class MauiCameraView: GridLayout
     private CameraCharacteristics camChars;
     private PreviewCaptureStateCallback sessionCallback;
 
-
     public MauiCameraView(Context context, CameraView cameraView) : base(context)
     {
         this.context = context;
         this.cameraView = cameraView;
 
         textureView = new(context);
+        textureView.SurfaceTextureUpdated += TextureView_SurfaceTextureUpdated;
         timer = new(33.3);
         timer.Elapsed += Timer_Elapsed;
         stateListener = new MyCameraStateCallback(this);
@@ -56,6 +57,20 @@ internal class MauiCameraView: GridLayout
         ORIENTATIONS.Append((int)SurfaceOrientation.Rotation180, 270);
         ORIENTATIONS.Append((int)SurfaceOrientation.Rotation270, 180);
         InitDevices();
+    }
+
+    private void TextureView_SurfaceTextureUpdated(object sender, TextureView.SurfaceTextureUpdatedEventArgs e)
+    {
+        using var bitmap = textureView.GetBitmap((int)cameraView.Width, (int)cameraView.Height);
+        if (bitmap == null)
+            return;
+
+        using MemoryStream stream = new();
+
+        bitmap.Compress(Bitmap.CompressFormat.Jpeg, 100, stream);
+        stream.Position = 0;
+
+        cameraView.OnFrameReceived(stream.ToArray());
     }
 
     private void InitDevices()
@@ -180,7 +195,7 @@ internal class MauiCameraView: GridLayout
         }
 
         sessionCallback = new PreviewCaptureStateCallback(this);
-        SessionConfiguration config = new((int)SessionType.Regular,surfaces,executorService, sessionCallback);
+        SessionConfiguration config = new((int)SessionType.Regular, surfaces, executorService, sessionCallback);
         cameraDevice.CreateCaptureSession(config);
     }
     private void UpdatePreview()
@@ -196,7 +211,7 @@ internal class MauiCameraView: GridLayout
             AdjustAspectRatio(videoSize.Width, videoSize.Height);
             SetZoomFactor(cameraView.ZoomFactor);
             //previewSession.SetRepeatingRequest(previewBuilder.Build(), null, null);
-            if (recording) 
+            if (recording)
                 mediaRecorder?.Start();
         }
         catch (CameraAccessException e)
@@ -256,17 +271,20 @@ internal class MauiCameraView: GridLayout
             {
                 mediaRecorder?.Stop();
                 mediaRecorder?.Dispose();
-            } catch { }
+            }
+            catch { }
             try
             {
                 previewSession?.StopRepeating();
                 previewSession?.Dispose();
-            } catch { }
+            }
+            catch { }
             try
             {
                 cameraDevice?.Close();
                 cameraDevice?.Dispose();
-            } catch { }
+            }
+            catch { }
             previewSession = null;
             cameraDevice = null;
             previewBuilder = null;
@@ -452,7 +470,7 @@ internal class MauiCameraView: GridLayout
     {
         if (cameraView != null && textureView != null)
         {
-            if (cameraView.MirroredImage) 
+            if (cameraView.MirroredImage)
                 textureView.ScaleX = -1;
             else
                 textureView.ScaleX = 1;
@@ -516,7 +534,7 @@ internal class MauiCameraView: GridLayout
             int minH = (int)(m.Height() / (cameraView.Camera.MaxZoomFactor));
             int newWidth = (int)(m.Width() - (minW * destZoom));
             int newHeight = (int)(m.Height() - (minH * destZoom));
-            Rect zoomArea = new((m.Width()-newWidth)/2, (m.Height()-newHeight)/2, newWidth, newHeight);
+            Rect zoomArea = new((m.Width() - newWidth) / 2, (m.Height() - newHeight) / 2, newWidth, newHeight);
             previewBuilder.Set(CaptureRequest.ScalerCropRegion, zoomArea);
             previewSession.SetRepeatingRequest(previewBuilder.Build(), null, null);
         }
@@ -579,7 +597,7 @@ internal class MauiCameraView: GridLayout
         */
         return result;
     }
-    
+
     private void AdjustAspectRatio(int videoWidth, int videoHeight)
     {
         Matrix txform = new();
@@ -611,7 +629,7 @@ internal class MauiCameraView: GridLayout
         var chars = cameraManager.GetCameraCharacteristics(cameraView.Camera.DeviceId);
         int sensorOrientation = (int)(chars.Get(CameraCharacteristics.SensorOrientation) as Java.Lang.Integer);
         bool swappedDimensions = false;
-        switch(displayRotation)
+        switch (displayRotation)
         {
             case SurfaceOrientation.Rotation0:
             case SurfaceOrientation.Rotation180:

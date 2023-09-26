@@ -7,6 +7,13 @@ using Windows.Graphics.Imaging;
 using Panel = Windows.Devices.Enumeration.Panel;
 using Windows.Media.MediaProperties;
 using Windows.Media.Devices;
+using Windows.UI.Core;
+using Windows.Storage.Streams;
+using Windows.Storage;
+using System.IO;
+using Microsoft.UI.Xaml.Media.Imaging;
+using System;
+using System.Runtime.InteropServices.WindowsRuntime;
 
 namespace Camera.MAUI.Platforms.Windows;
 
@@ -42,7 +49,7 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
     {
         if (cameraView != null)
         {
-            if(cameraView.MirroredImage)
+            if (cameraView.MirroredImage)
                 flowDirection = Microsoft.UI.Xaml.FlowDirection.RightToLeft;
             else
                 flowDirection = Microsoft.UI.Xaml.FlowDirection.LeftToRight;
@@ -243,7 +250,7 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
                         UpdateTorch();
                         UpdateMirroredImage();
                         SetZoomFactor(cameraView.ZoomFactor);
-                        
+
                         var frameFormat = frameSource.SupportedFormats.OrderByDescending(f => f.VideoFormat.Width * f.VideoFormat.Height).FirstOrDefault();
 
                         if (frameFormat != null)
@@ -299,7 +306,8 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
                 mediaCapture.Dispose();
                 mediaCapture = null;
             }
-        }else
+        }
+        else
             result = CameraResult.NotInitiated;
         return result;
     }
@@ -324,7 +332,6 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
     {
         cameraView.RefreshSnapshot(GetSnapShot(cameraView.AutoSnapShotFormat, true));
     }
-
     private void FrameReader_FrameArrived(MediaFrameReader sender, MediaFrameArrivedEventArgs args)
     {
         if (!snapping && cameraView != null && cameraView.AutoSnapShotSeconds > 0 && (DateTime.Now - cameraView.lastSnapshot).TotalSeconds >= cameraView.AutoSnapShotSeconds)
@@ -341,8 +348,9 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
                 frames = 0;
             }
         }
-    }
 
+        ReadFrameAndNotify(sender);
+    }
     internal async Task<CameraResult> StopCameraAsync()
     {
         CameraResult result = CameraResult.Success;
@@ -375,7 +383,8 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
             {
                 result = CameraResult.AccessError;
             }
-        }else
+        }
+        else
             result = CameraResult.NotInitiated;
         started = false;
 
@@ -466,7 +475,8 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
                             result = ImageSource.FromStream(() => stream);
                         cameraView.SnapShotStream?.Dispose();
                         cameraView.SnapShotStream = stream;
-                    }else
+                    }
+                    else
                         result = ImageSource.FromStream(() => stream);
                     img.Dispose();
                     snapshot.Dispose();
@@ -520,7 +530,8 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
                 stream.Close();
             }
             snapping = false;
-        }else
+        }
+        else
             result = false;
         return result;
     }
@@ -529,4 +540,98 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
     {
         StopCameraAsync().Wait();
     }
+
+    SoftwareBitmap backBuffer;
+    bool taskRunning;
+    private void ReadFrameAndNotify(MediaFrameReader sender)
+    {
+        Task.Run(async () =>
+        {
+            var mediaFrameReference = sender.TryAcquireLatestFrame();
+            var videoMediaFrame = mediaFrameReference?.VideoMediaFrame;
+            var softwareBitmap = videoMediaFrame?.SoftwareBitmap;
+
+
+            if (softwareBitmap != null)
+            {
+                //if (softwareBitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8 ||
+                //    softwareBitmap.BitmapAlphaMode != BitmapAlphaMode.Premultiplied)
+                //{
+                //    softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                //}
+
+                // Swap the processed frame to _backBuffer and dispose of the unused image.
+                softwareBitmap = Interlocked.Exchange(ref backBuffer, softwareBitmap);
+                softwareBitmap?.Dispose();
+
+                // Changes to XAML ImageElement must happen on UI thread through Dispatcher
+                var task = cameraView.Dispatcher.DispatchAsync(
+                    async () =>
+                    {
+                        try
+                        {
+                            // Don't let two copies of this task run at the same time.
+                            if (taskRunning)
+                            {
+                                return;
+                            }
+                            taskRunning = true;
+
+                            // Keep draining frames from the backbuffer until the backbuffer is empty.
+                            SoftwareBitmap latestBitmap;
+                            while ((latestBitmap = Interlocked.Exchange(ref backBuffer, null)) != null)
+                            {
+                                var bytes = await EncodedBytes(latestBitmap, BitmapEncoder.JpegEncoderId);
+
+                                latestBitmap.Dispose();
+
+                                //cameraView.FrameReceived.Invoke(cameraView, new CameraView.FrameEventArgs { Bytes = bytes });
+                                cameraView.OnFrameReceived(bytes);
+
+                            }
+                        }
+                        catch (Exception ex) { }
+                        finally
+                        {
+                            taskRunning = false;
+                        }
+                    });
+            }
+
+            mediaFrameReference?.Dispose();
+
+
+        });
+    }
+
+    private async Task<byte[]> EncodedBytes(SoftwareBitmap soft, Guid encoderId)
+    {
+        byte[] array = null;
+
+        // First: Use an encoder to copy from SoftwareBitmap to an in-mem stream (FlushAsync)
+        // Next:  Use ReadAsync on the in-mem stream to get byte[] array
+
+        //var ms = new MemoryStream();
+        using (var ms = new InMemoryRandomAccessStream())
+        {
+            BitmapEncoder encoder = await BitmapEncoder.CreateAsync(encoderId, ms);
+            soft = SoftwareBitmap.Convert(soft, BitmapPixelFormat.Rgba8, BitmapAlphaMode.Premultiplied);
+
+            //BitmapEncoder encoder = await BitmapEncoder.CreateAsync(encoderId, ms);
+            encoder.SetSoftwareBitmap(soft);
+
+            try
+            {
+                await encoder.FlushAsync();
+            }
+            catch (Exception ex) { return new byte[0]; }
+
+            //return ms.ToArray();
+            array = new byte[ms.Size];
+            await ms.ReadAsync(array.AsBuffer(), (uint)ms.Size, InputStreamOptions.None);
+        }
+        return array;
+    }
+
+
 }
