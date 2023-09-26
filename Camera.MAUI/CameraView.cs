@@ -279,11 +279,14 @@ public class CameraView : View, ICameraView
     /// </summary>
     public static CameraView Current { get; set; }
 
+    /// <summary>
+    /// Event launched when camera frame arrives.
+    /// </summary>
     public event EventHandler<FrameEventArgs> FrameReceived;
 
-    public void OnFrameReceived(byte[] rgb)
+    public void OnFrameReceived(Span<byte> rgb)
     {
-        FrameReceived?.Invoke(this, new FrameEventArgs { Bytes = rgb });
+        FrameReceived?.Invoke(this, new FrameEventArgs { Bytes = rgb.ToArray() });
     }
 
     private readonly BarcodeReaderGeneric BarcodeReader;

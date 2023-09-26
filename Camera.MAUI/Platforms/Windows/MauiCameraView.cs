@@ -14,6 +14,8 @@ using System.IO;
 using Microsoft.UI.Xaml.Media.Imaging;
 using System;
 using System.Runtime.InteropServices.WindowsRuntime;
+using System.Runtime.CompilerServices;
+using Image = Microsoft.UI.Xaml.Controls.Image;
 
 namespace Camera.MAUI.Platforms.Windows;
 
@@ -543,9 +545,9 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
 
     SoftwareBitmap backBuffer;
     bool taskRunning;
-    private void ReadFrameAndNotify(MediaFrameReader sender)
+    private async Task ReadFrameAndNotify(MediaFrameReader sender)
     {
-        Task.Run(async () =>
+        await Task.Run(async () =>
         {
             var mediaFrameReference = sender.TryAcquireLatestFrame();
             var videoMediaFrame = mediaFrameReference?.VideoMediaFrame;
@@ -554,20 +556,17 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
 
             if (softwareBitmap != null)
             {
-                //if (softwareBitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8 ||
-                //    softwareBitmap.BitmapAlphaMode != BitmapAlphaMode.Premultiplied)
-                //{
-                //    softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
-                //}
+                //var backBuffer = new SoftwareBitmap(softwareBitmap.BitmapPixelFormat, softwareBitmap.PixelWidth, softwareBitmap.PixelHeight, softwareBitmap.BitmapAlphaMode);
+                //softwareBitmap.CopyTo(backBuffer);
 
                 // Swap the processed frame to _backBuffer and dispose of the unused image.
                 softwareBitmap = Interlocked.Exchange(ref backBuffer, softwareBitmap);
                 softwareBitmap?.Dispose();
 
                 // Changes to XAML ImageElement must happen on UI thread through Dispatcher
-                var task = cameraView.Dispatcher.DispatchAsync(
-                    async () =>
-                    {
+                //await cameraView.Dispatcher.DispatchAsync(
+                //    async () =>
+                //    {
                         try
                         {
                             // Don't let two copies of this task run at the same time.
@@ -579,15 +578,14 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
 
                             // Keep draining frames from the backbuffer until the backbuffer is empty.
                             SoftwareBitmap latestBitmap;
+                            //byte[] bytes = null;
                             while ((latestBitmap = Interlocked.Exchange(ref backBuffer, null)) != null)
                             {
                                 var bytes = await EncodedBytes(latestBitmap, BitmapEncoder.JpegEncoderId);
 
                                 latestBitmap.Dispose();
 
-                                //cameraView.FrameReceived.Invoke(cameraView, new CameraView.FrameEventArgs { Bytes = bytes });
                                 cameraView.OnFrameReceived(bytes);
-
                             }
                         }
                         catch (Exception ex) { }
@@ -595,43 +593,169 @@ public sealed partial class MauiCameraView : UserControl, IDisposable
                         {
                             taskRunning = false;
                         }
-                    });
+                    //});
             }
 
             mediaFrameReference?.Dispose();
-
-
         });
     }
 
-    private async Task<byte[]> EncodedBytes(SoftwareBitmap soft, Guid encoderId)
+    private async Task<byte[]> EncodedBytes(SoftwareBitmap softwareBitmap, Guid encoderId)
     {
-        byte[] array = null;
+        using var ms = new InMemoryRandomAccessStream();
 
-        // First: Use an encoder to copy from SoftwareBitmap to an in-mem stream (FlushAsync)
-        // Next:  Use ReadAsync on the in-mem stream to get byte[] array
-
-        //var ms = new MemoryStream();
-        using (var ms = new InMemoryRandomAccessStream())
+        try
         {
+            if (softwareBitmap.BitmapPixelFormat != BitmapPixelFormat.Rgba8)
+                softwareBitmap = SoftwareBitmap.Convert(softwareBitmap, BitmapPixelFormat.Rgba8, BitmapAlphaMode.Premultiplied);
+
             BitmapEncoder encoder = await BitmapEncoder.CreateAsync(encoderId, ms);
-            soft = SoftwareBitmap.Convert(soft, BitmapPixelFormat.Rgba8, BitmapAlphaMode.Premultiplied);
+            encoder.SetSoftwareBitmap(softwareBitmap);
 
-            //BitmapEncoder encoder = await BitmapEncoder.CreateAsync(encoderId, ms);
-            encoder.SetSoftwareBitmap(soft);
-
-            try
-            {
-                await encoder.FlushAsync();
-            }
-            catch (Exception ex) { return new byte[0]; }
-
-            //return ms.ToArray();
-            array = new byte[ms.Size];
-            await ms.ReadAsync(array.AsBuffer(), (uint)ms.Size, InputStreamOptions.None);
+            await encoder.FlushAsync();
         }
+        catch (Exception ex) { return new byte[0]; }
+
+        byte[] array = new byte[ms.Size];
+        await ms.ReadAsync(array.AsBuffer(), (uint)ms.Size, InputStreamOptions.None);
         return array;
+    }
+}
+
+class FrameRenderer
+{
+    private Image _imageElement;
+    private SoftwareBitmap _backBuffer;
+    private bool _taskRunning = false;
+
+    public FrameRenderer(Image imageElement)
+    {
+        _imageElement = imageElement;
+        _imageElement.Source = new SoftwareBitmapSource();
+    }
+
+    // Processes a MediaFrameReference and displays it in a XAML image control
+    public void ProcessFrame(MediaFrameReference frame)
+    {
+        var softwareBitmap = FrameRenderer.ConvertToDisplayableImage(frame?.VideoMediaFrame);
+        if (softwareBitmap != null)
+        {
+            // Swap the processed frame to _backBuffer and trigger UI thread to render it
+            softwareBitmap = Interlocked.Exchange(ref _backBuffer, softwareBitmap);
+
+            // UI thread always reset _backBuffer before using it.  Unused bitmap should be disposed.
+            softwareBitmap?.Dispose();
+
+            // Changes to xaml ImageElement must happen in UI thread through Dispatcher
+            var task = _imageElement.Dispatcher.RunAsync(CoreDispatcherPriority.Normal,
+                async () =>
+                {
+                    // Don't let two copies of this task run at the same time.
+                    if (_taskRunning)
+                    {
+                        return;
+                    }
+                    _taskRunning = true;
+
+                    // Keep draining frames from the backbuffer until the backbuffer is empty.
+                    SoftwareBitmap latestBitmap;
+                    while ((latestBitmap = Interlocked.Exchange(ref _backBuffer, null)) != null)
+                    {
+                        var imageSource = (SoftwareBitmapSource)_imageElement.Source;
+                        await imageSource.SetBitmapAsync(latestBitmap);
+                        latestBitmap.Dispose();
+                    }
+
+                    _taskRunning = false;
+                });
+        }
     }
 
 
+
+
+
+    /// <summary>
+    /// Converts a frame to a SoftwareBitmap of a valid format to display in an Image control.
+    /// </summary>
+    /// <param name="inputFrame">Frame to convert.</param>
+
+    public static unsafe SoftwareBitmap ConvertToDisplayableImage(VideoMediaFrame inputFrame)
+    {
+        SoftwareBitmap result = null;
+        using (var inputBitmap = inputFrame?.SoftwareBitmap)
+        {
+            if (inputBitmap != null)
+            {
+                switch (inputFrame.FrameReference.SourceKind)
+                {
+                    case MediaFrameSourceKind.Color:
+                        // XAML requires Bgra8 with premultiplied alpha.
+                        // We requested Bgra8 from the MediaFrameReader, so all that's
+                        // left is fixing the alpha channel if necessary.
+                        if (inputBitmap.BitmapPixelFormat != BitmapPixelFormat.Bgra8)
+                        {
+                            System.Diagnostics.Debug.WriteLine("Color frame in unexpected format.");
+                        }
+                        else if (inputBitmap.BitmapAlphaMode == BitmapAlphaMode.Premultiplied)
+                        {
+                            // Already in the correct format.
+                            result = SoftwareBitmap.Copy(inputBitmap);
+                        }
+                        else
+                        {
+                            // Convert to premultiplied alpha.
+                            result = SoftwareBitmap.Convert(inputBitmap, BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+                        }
+                        break;
+
+                    case MediaFrameSourceKind.Depth:
+                        System.Diagnostics.Debug.WriteLine("Depth frame in unexpected format.");
+                        break;
+
+                    case MediaFrameSourceKind.Infrared:
+                        System.Diagnostics.Debug.WriteLine("Infrared frame in unexpected format.");
+                        break;
+                }
+            }
+        }
+
+        return result;
+    }
+
+    // Displays the provided softwareBitmap in a XAML image control.
+    public void PresentSoftwareBitmap(SoftwareBitmap softwareBitmap)
+    {
+        if (softwareBitmap != null)
+        {
+            // Swap the processed frame to _backBuffer and trigger UI thread to render it
+            softwareBitmap = Interlocked.Exchange(ref _backBuffer, softwareBitmap);
+
+            // UI thread always reset _backBuffer before using it.  Unused bitmap should be disposed.
+            softwareBitmap?.Dispose();
+
+            // Changes to xaml ImageElement must happen in UI thread through Dispatcher
+            var task = _imageElement.Dispatcher.RunAsync(CoreDispatcherPriority.Normal,
+                async () =>
+                {
+                    // Don't let two copies of this task run at the same time.
+                    if (_taskRunning)
+                    {
+                        return;
+                    }
+                    _taskRunning = true;
+
+                    // Keep draining frames from the backbuffer until the backbuffer is empty.
+                    SoftwareBitmap latestBitmap;
+                    while ((latestBitmap = Interlocked.Exchange(ref _backBuffer, null)) != null)
+                    {
+                        var imageSource = (SoftwareBitmapSource)_imageElement.Source;
+                        await imageSource.SetBitmapAsync(latestBitmap);
+                        latestBitmap.Dispose();
+                    }
+
+                    _taskRunning = false;
+                });
+        }
+    }
 }
